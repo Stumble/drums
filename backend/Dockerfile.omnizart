@@ -1,0 +1,19 @@
+# Isolates omnizart's old-TensorFlow stack from the API environment.
+#
+# Build:  docker build -f Dockerfile.omnizart -t drumscribe-omnizart .
+# Then point the API at it:
+#   export DRUMSCRIBE_OMNIZART_CMD="docker run --rm -v {dir}:/work drumscribe-omnizart \
+#       omnizart drum transcribe /work/{name} --output /work"
+#
+# omnizart needs an older Python (3.8/3.9) for its TF1-era pins; pin if build breaks.
+FROM python:3.9-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg libsndfile1 git wget && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir omnizart
+
+# Download the pretrained checkpoints into the image so runtime is offline.
+RUN omnizart download-checkpoints || true
+
+WORKDIR /work

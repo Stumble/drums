@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>drumscribe — drum stem → sheet music</title>
+  <!-- OpenSheetMusicDisplay renders the MusicXML the backend returns -->
+  <script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay@1.8.7/build/opensheetmusicdisplay.min.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 980px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+    h1 { font-size: 1.4rem; }
+    .row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: flex-end; margin: 1rem 0; }
+    label { display: block; font-size: .8rem; color: #555; margin-bottom: .25rem; }
+    input, select, button { padding: .5rem .6rem; font-size: 1rem; border: 1px solid #ccc; border-radius: 6px; }
+    button { background: #111; color: #fff; cursor: pointer; border: none; }
+    button:disabled { opacity: .5; cursor: default; }
+    #status { font-size: .85rem; color: #666; min-height: 1.2em; }
+    #score { border: 1px solid #eee; border-radius: 8px; margin-top: 1rem; padding: 1rem; min-height: 120px; }
+    .hint { font-size: .8rem; color: #888; }
+  </style>
+</head>
+<body>
+  <h1>🥁 drumscribe</h1>
+  <p class="hint">Export an isolated drum stem from Moises, drop it here with its BPM, and get drum sheet music. Download the MusicXML to fine-tune in MuseScore.</p>
+
+  <div class="row">
+    <div>
+      <label>Drum stem (mp3 / m4a / wav)</label>
+      <input type="file" id="file" accept=".mp3,.m4a,.wav,.flac,audio/*" />
+    </div>
+    <div>
+      <label>BPM (from Moises)</label>
+      <input type="number" id="bpm" value="120" min="30" max="300" step="0.1" style="width:7rem" />
+    </div>
+    <div>
+      <label>Grid</label>
+      <select id="grid">
+        <option value="4" selected>16th notes</option>
+        <option value="2">8th notes</option>
+        <option value="3">8th triplets</option>
+        <option value="6">16th triplets</option>
+      </select>
+    </div>
+    <div>
+      <label>Engine</label>
+      <select id="engine">
+        <option value="heuristic" selected>heuristic (no setup)</option>
+        <option value="omnizart">omnizart (pretrained)</option>
+      </select>
+    </div>
+    <button id="go">Transcribe</button>
+  </div>
+
+  <div id="status"></div>
+  <div class="row" id="actions" style="display:none">
+    <button id="download">⬇ Download MusicXML</button>
+  </div>
+  <div id="score"></div>
+
+  <script>
+    const API = location.origin.includes("file") ? "http://localhost:8000" : "";
+    const $ = (id) => document.getElementById(id);
+    let osmd, lastXml = null;
+
+    async function transcribe() {
+      const f = $("file").files[0];
+      if (!f) { $("status").textContent = "Pick a drum stem first."; return; }
+
+      const fd = new FormData();
+      fd.append("file", f);
+      fd.append("bpm", $("bpm").value);
+      fd.append("grid", $("grid").value);
+      fd.append("engine", $("engine").value);
+
+      $("go").disabled = true;
+      $("status").textContent = "Transcribing… (first run downloads the renderer)";
+      try {
+        const res = await fetch(API + "/transcribe", { method: "POST", body: fd });
+        if (!res.ok) throw new Error(await res.text());
+        lastXml = await res.text();
+        const hits = res.headers.get("X-Hit-Count");
+        $("status").textContent = `Done — ${hits} hits detected.`;
+        $("actions").style.display = "flex";
+
+        if (!osmd) osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay("score", { drawTitle: true });
+        await osmd.load(lastXml);
+        osmd.render();
+      } catch (e) {
+        $("status").textContent = "Error: " + e.message;
+      } finally {
+        $("go").disabled = false;
+      }
+    }
+
+    function download() {
+      if (!lastXml) return;
+      const blob = new Blob([lastXml], { type: "application/vnd.recordare.musicxml+xml" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = ($("file").files[0]?.name || "drums").replace(/\.[^.]+$/, "") + ".musicxml";
+      a.click();
+    }
+
+    $("go").addEventListener("click", transcribe);
+    $("download").addEventListener("click", download);
+  </script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Generated test/output artifacts
+backend/sample_rock_beat.musicxml
+backend/synthetic_beat.wav
+*.musicxml
+*.wav
+*.mid
+*.midi
+*.pdf
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

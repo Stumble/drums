@@ -1,0 +1,10 @@
+# Core API + notation + zero-setup heuristic engine.
+# (The omnizart pretrained engine runs in Docker — see Dockerfile.omnizart —
+#  so its heavy/old TensorFlow deps stay out of this environment.)
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+music21>=9.1
+librosa>=0.10
+numpy>=1.24
+pretty_midi>=0.2.10   # parses MIDI emitted by the pretrained engine
