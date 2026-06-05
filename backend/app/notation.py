@@ -1,19 +1,23 @@
-"""Turn quantized drum hits into drum-clef sheet music (MusicXML).
+"""Turn quantized drum hits into readable drum-clef sheet music (MusicXML).
 
-Output is MusicXML so it renders in the browser (OpenSheetMusicDisplay) and
-opens cleanly in MuseScore/Sibelius for hand-correction — the editing loop that
-makes this useful as a practice tool.
+Real drum notation uses two voices on one staff:
+  * voice 1 — the hands (snare, hi-hats, toms, cymbals): stems UP
+  * voice 2 — the feet (kick, hi-hat pedal): stems DOWN
 
-MVP simplifications (tracked for later polish):
-  * single voice, all stems up (real charts split hands-up / feet-down)
-  * every grid slot is written explicitly (no rest merging / beaming cleanup)
+Each attack is written ringing to the next attack in its own voice (capped at a
+beat), and the empty space is consolidated into the fewest standard rests — so a
+groove reads like a chart, not a wall of sixteenth-notes.
+
+Output is MusicXML: renders in the browser (OpenSheetMusicDisplay) and opens
+cleanly in MuseScore/Sibelius for hand-correction.
 """
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Sequence, Tuple
 
 from music21 import (
+    articulations,
     clef,
     duration,
     metadata,
@@ -34,7 +38,7 @@ from .schemas import (
 # Positions follow the de-facto MuseScore drumset layout.
 VOICE_MAP = {
     CRASH:         ("A", 5, "x"),
-    HIHAT_OPEN:    ("G", 5, "circle-x"),
+    HIHAT_OPEN:    ("G", 5, "x"),       # 'open' shown via an 'o' articulation
     HIHAT_CLOSED:  ("G", 5, "x"),
     RIDE:          ("F", 5, "x"),
     TOM_HIGH:      ("E", 5, "normal"),
@@ -45,15 +49,68 @@ VOICE_MAP = {
     HIHAT_PEDAL:   ("D", 4, "x"),
 }
 
+# Which staff voice each instrument belongs to.
+FEET = {KICK, HIHAT_PEDAL}            # stems down
+HANDS = set(VOICE_MAP) - FEET        # stems up
 
-def _make_unpitched(instrument: str, slot_ql: float) -> note.Unpitched:
+# A note rings at most this long before we cut it and write rests (keeps sparse
+# parts — e.g. a backbeat — from becoming whole/half notes).
+MAX_RING_QL = 1.0  # one quarter-note beat
+
+
+def _make_unpitched(instrument: str, dur_ql: float) -> note.Unpitched:
     step, octave, nh = VOICE_MAP[instrument]
     u = note.Unpitched()
     u.displayStep = step
     u.displayOctave = octave
     u.notehead = nh
-    u.duration = duration.Duration(slot_ql)
+    u.duration = duration.Duration(dur_ql)
+    if instrument == HIHAT_OPEN:
+        u.articulations.append(articulations.OpenString())  # renders as 'o'
     return u
+
+
+def _make_element(instruments: Sequence[str], dur_ql: float, stem: str):
+    unps = [_make_unpitched(i, dur_ql) for i in instruments if i in VOICE_MAP]
+    if len(unps) == 1:
+        el = unps[0]
+    else:
+        el = percussion.PercussionChord(unps)
+        el.duration = duration.Duration(dur_ql)
+    el.stemDirection = stem
+    return el
+
+
+def _build_voice(
+    events: List[Tuple[float, List[str]]],
+    measure_ql: float,
+    stem: str,
+    voice_id: str,
+) -> stream.Voice:
+    """events: sorted (offset_ql, [instruments]) for one voice in one measure.
+
+    Notes ring to the next attack (capped at MAX_RING_QL); gaps become rests.
+    music21's makeNotation later splits any rest/note into beat-aligned,
+    notatable values, which is what consolidates the busy grid.
+    """
+    v = stream.Voice(id=voice_id)
+    if not events:
+        v.insert(0.0, note.Rest(quarterLength=measure_ql))
+        return v
+
+    cursor = 0.0
+    for i, (off, instruments) in enumerate(events):
+        if off > cursor + 1e-6:
+            v.insert(cursor, note.Rest(quarterLength=off - cursor))
+            cursor = off
+        next_off = events[i + 1][0] if i + 1 < len(events) else measure_ql
+        dur = min(next_off - off, MAX_RING_QL)
+        v.insert(off, _make_element(instruments, dur, stem))
+        cursor = off + dur
+
+    if cursor < measure_ql - 1e-6:
+        v.insert(cursor, note.Rest(quarterLength=measure_ql - cursor))
+    return v
 
 
 def build_score(
@@ -64,34 +121,40 @@ def build_score(
     title: str = "Drum Transcription",
 ) -> stream.Score:
     slots_per_measure, slot_map = quantize_hits(hits, bpm, grid, beats_per_measure)
+    slot_ql = 1.0 / grid                       # quarter note = 1.0
+    measure_ql = float(beats_per_measure)       # 4/4 -> 4.0 quarter-lengths
     max_slot = max(slot_map) if slot_map else 0
     num_measures = max_slot // slots_per_measure + 1
-    slot_ql = 1.0 / grid  # quarter note = 1.0; grid=4 -> 0.25 (sixteenth)
 
     score = stream.Score()
     score.insert(0, metadata.Metadata())
     score.metadata.title = title
-
     part = stream.Part()
-    part.insert(0, clef.PercussionClef())
-    part.insert(0, meter.TimeSignature(f"{beats_per_measure}/4"))
-    part.insert(0, tempo.MetronomeMark(number=round(bpm)))
 
     for m in range(num_measures):
         measure = stream.Measure(number=m + 1)
+        if m == 0:
+            measure.clef = clef.PercussionClef()
+            measure.timeSignature = meter.TimeSignature(f"{beats_per_measure}/4")
+            measure.insert(0, tempo.MetronomeMark(number=round(bpm)))
+
+        hands_events: List[Tuple[float, List[str]]] = []
+        feet_events: List[Tuple[float, List[str]]] = []
         for s in range(slots_per_measure):
             gslot = m * slots_per_measure + s
-            voices = [h for h in slot_map.get(gslot, []) if h.instrument in VOICE_MAP]
-            if not voices:
-                measure.append(note.Rest(quarterLength=slot_ql))
+            hits_here = slot_map.get(gslot, [])
+            if not hits_here:
                 continue
-            unps = [_make_unpitched(h.instrument, slot_ql) for h in voices]
-            if len(unps) == 1:
-                measure.append(unps[0])
-            else:
-                chord = percussion.PercussionChord(unps)
-                chord.duration = duration.Duration(slot_ql)
-                measure.append(chord)
+            offset = s * slot_ql
+            hands = [h.instrument for h in hits_here if h.instrument in HANDS]
+            feet = [h.instrument for h in hits_here if h.instrument in FEET]
+            if hands:
+                hands_events.append((offset, hands))
+            if feet:
+                feet_events.append((offset, feet))
+
+        measure.insert(0, _build_voice(hands_events, measure_ql, "up", "1"))
+        measure.insert(0, _build_voice(feet_events, measure_ql, "down", "2"))
         part.append(measure)
 
     score.append(part)

@@ -8,7 +8,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 
@@ -72,4 +72,19 @@ async def transcribe(
         content=xml,
         media_type="application/vnd.recordare.musicxml+xml",
         headers={"X-Hit-Count": str(len(result.hits))},
+    )
+
+
+@app.post("/export/pdf")
+async def export_pdf(musicxml: str = Body(..., media_type="text/plain")):
+    """Engrave MusicXML (from /transcribe) into a downloadable PDF."""
+    try:
+        from .export import musicxml_to_pdf
+        pdf = musicxml_to_pdf(musicxml)
+    except Exception as e:
+        raise HTTPException(500, f"PDF export failed: {e}")
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="drums.pdf"'},
     )

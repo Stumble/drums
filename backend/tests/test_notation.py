@@ -37,11 +37,12 @@ def test_produces_valid_musicxml():
     assert "<unpitched>" in xml
     # the three voices we played should all appear
     assert xml.count("<note") >= 12
-    return xml
+    # two-voice layout: hands (stem up) and feet (stem down)
+    assert "<stem>up</stem>" in xml and "<stem>down</stem>" in xml
 
 
 if __name__ == "__main__":
-    xml = test_produces_valid_musicxml()
+    xml = to_musicxml(synthetic_rock_beat(), bpm=120.0)
     out = Path(__file__).resolve().parents[1] / "sample_rock_beat.musicxml"
     out.write_text(xml)
     print(f"OK — wrote {out} ({len(xml)} bytes)")

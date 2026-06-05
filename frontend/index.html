@@ -53,7 +53,9 @@
 
   <div id="status"></div>
   <div class="row" id="actions" style="display:none">
-    <button id="download">⬇ Download MusicXML</button>
+    <button id="download">⬇ MusicXML</button>
+    <button id="downloadPdf">⬇ PDF</button>
+    <span class="hint">MusicXML → edit in MuseScore · PDF → print &amp; practice</span>
   </div>
   <div id="score"></div>
 
@@ -92,17 +94,43 @@
       }
     }
 
+    function baseName(ext) {
+      return ($("file").files[0]?.name || "drums").replace(/\.[^.]+$/, "") + ext;
+    }
+
     function download() {
       if (!lastXml) return;
       const blob = new Blob([lastXml], { type: "application/vnd.recordare.musicxml+xml" });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = ($("file").files[0]?.name || "drums").replace(/\.[^.]+$/, "") + ".musicxml";
+      a.download = baseName(".musicxml");
       a.click();
+    }
+
+    async function downloadPdf() {
+      if (!lastXml) return;
+      $("status").textContent = "Engraving PDF…";
+      try {
+        const res = await fetch(API + "/export/pdf", {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: lastXml,
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const blob = await res.blob();
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = baseName(".pdf");
+        a.click();
+        $("status").textContent = "PDF downloaded.";
+      } catch (e) {
+        $("status").textContent = "PDF error: " + e.message;
+      }
     }
 
     $("go").addEventListener("click", transcribe);
     $("download").addEventListener("click", download);
+    $("downloadPdf").addEventListener("click", downloadPdf);
   </script>
 </body>
 </html>

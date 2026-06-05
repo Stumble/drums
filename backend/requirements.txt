@@ -1,4 +1,4 @@
-# Core API + notation + zero-setup heuristic engine.
+# Core API + notation + zero-setup heuristic engine + PDF export.
 # (The omnizart pretrained engine runs in Docker — see Dockerfile.omnizart —
 #  so its heavy/old TensorFlow deps stay out of this environment.)
 fastapi>=0.110
@@ -7,4 +7,13 @@ python-multipart>=0.0.9
 music21>=9.1
 librosa>=0.10
 numpy>=1.24
+scipy>=1.11
 pretty_midi>=0.2.10   # parses MIDI emitted by the pretrained engine
+
+# Headless MusicXML -> PDF (no MuseScore needed).
+# NOTE: cairosvg needs the system Cairo lib — install it once:
+#   Debian/Ubuntu:  sudo apt-get install -y libcairo2
+#   macOS (brew):   brew install cairo
+verovio>=4.0
+cairosvg>=2.7
+pypdf>=4.0

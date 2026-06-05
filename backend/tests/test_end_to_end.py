@@ -61,24 +61,22 @@ def render():
     return str(path)
 
 
-def main():
-    np.random.seed(0)
+def test_audio_to_musicxml():
     path = render()
     result = HeuristicEngine().transcribe(path, bpm=120.0)
 
     counts = {}
     for h in result.hits:
         counts[h.instrument] = counts.get(h.instrument, 0) + 1
-    print(f"detected {len(result.hits)} hits: {counts}")
 
-    assert len(result.hits) >= 8, "should detect most onsets"
+    assert len(result.hits) >= 8, f"should detect most onsets, got {counts}"
     assert KICK in counts and SNARE in counts and HIHAT_CLOSED in counts, \
         f"all three voices should appear, got {counts}"
 
     xml = to_musicxml(result.hits, result.bpm, grid=4)
     assert "<score-partwise" in xml and "<unpitched>" in xml
-    print("end-to-end OK — audio -> hits -> valid drum MusicXML")
 
 
 if __name__ == "__main__":
-    main()
+    test_audio_to_musicxml()
+    print("end-to-end OK — audio -> hits -> valid drum MusicXML")
