@@ -1,0 +1,21 @@
+# Keep the build context small and reproducible.
+**/.venv/
+**/venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/*.egg-info/
+
+# Generated artifacts
+**/*.wav
+**/*.mid
+**/*.midi
+**/*.pdf
+**/*.musicxml
+
+# VCS / editor / OS
+.git/
+.gitignore
+.idea/
+.vscode/
+.DS_Store
