@@ -1,0 +1,77 @@
+# drumscribe full image: API/UI plus the Omnizart pretrained engine.
+#
+# Build:
+#   docker build -f Dockerfile.full -t drumscribe-full .
+# Run:
+#   docker run --rm -p 8000:8000 drumscribe-full
+#
+# This keeps the app and Omnizart in separate Python runtimes inside one image:
+# Python 3.12 for the API, Python 3.9 for Omnizart's older TensorFlow stack.
+
+FROM python:3.9-slim AS omnizart
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    OMNIZART_VENV=/opt/drumscribe-omnizart
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        ffmpeg \
+        libsndfile1 \
+        portaudio19-dev \
+        git \
+        wget \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m venv --copies "$OMNIZART_VENV" \
+    && "$OMNIZART_VENV/bin/pip" install -U pip \
+    && "$OMNIZART_VENV/bin/pip" install omnizart \
+    && mkdir -p /root/.local /root/.omnizart \
+    && "$OMNIZART_VENV/bin/omnizart" download-checkpoints
+
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    API_VENV=/opt/drumscribe-api \
+    OMNIZART_VENV=/opt/drumscribe-omnizart \
+    LD_LIBRARY_PATH=/usr/local/lib \
+    DRUMSCRIBE_OMNIZART_CMD="/opt/drumscribe-omnizart/bin/omnizart drum transcribe {dir}/{name} --output {dir}"
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ffmpeg \
+        libsndfile1 \
+        libcairo2 \
+        libportaudio2 \
+        git \
+        wget \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=omnizart /usr/local/bin/python3.9 /usr/local/bin/python3.9
+COPY --from=omnizart /usr/local/lib/libpython3.9.so.1.0 /usr/local/lib/libpython3.9.so.1.0
+COPY --from=omnizart /usr/local/lib/python3.9 /usr/local/lib/python3.9
+COPY --from=omnizart /opt/drumscribe-omnizart /opt/drumscribe-omnizart
+COPY --from=omnizart /root/.local /root/.local
+COPY --from=omnizart /root/.omnizart /root/.omnizart
+
+WORKDIR /app
+
+COPY backend/requirements.txt backend/requirements.txt
+
+RUN python -m venv "$API_VENV" \
+    && "$API_VENV/bin/pip" install -U pip \
+    && "$API_VENV/bin/pip" install -r backend/requirements.txt \
+    && "$OMNIZART_VENV/bin/python" -c "import sys; print(sys.version)"
+
+COPY backend backend
+COPY frontend frontend
+
+WORKDIR /app/backend
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD /opt/drumscribe-api/bin/python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"
+
+CMD ["/opt/drumscribe-api/bin/uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

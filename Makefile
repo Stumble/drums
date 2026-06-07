@@ -3,7 +3,7 @@
 VENV := backend/.venv
 PY := $(VENV)/bin/python
 
-.PHONY: help up down build logs dev venv test clean
+.PHONY: help up down build build-full run-full logs dev venv test clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -17,6 +17,13 @@ down: ## Stop and remove the container
 
 build: ## Build the Docker image
 	docker compose build
+
+build-full: ## Build the full Docker image with Omnizart included
+	docker build -f Dockerfile.full -t drumscribe-full .
+
+run-full: ## Build + run the full Omnizart image (http://localhost:8000)
+	docker build -f Dockerfile.full -t drumscribe-full .
+	docker run --rm -p 8000:8000 drumscribe-full
 
 logs: ## Tail container logs
 	docker compose logs -f

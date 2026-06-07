@@ -33,20 +33,46 @@ notation/UI. See `app/engines/base.py`.
   `o` for open hi-hat).
 - **MusicXML + PDF** export.
 
-## Run it (Docker — recommended)
+## Run it (full Omnizart Docker image — recommended for servers)
 
-Everything (Python deps **and** the system libs for audio decoding + PDF export)
-is baked into the image, so there's nothing to install by hand:
+For the full pretrained-engine version, build one deployable Docker image that
+contains the API, web UI, Omnizart, TensorFlow, audio/PDF system libraries, and
+the Omnizart checkpoints:
 
 ```bash
-docker compose up --build      # or: docker build -t drumscribe . && docker run --rm -p 8000:8000 drumscribe
+docker build -f Dockerfile.full -t drumscribe-full . && \
+docker run -d --restart unless-stopped --name drumscribe -p 8000:8000 drumscribe-full
 ```
 
-Then open <http://localhost:8000>, choose a drum stem, enter the BPM from Moises,
-and hit **Transcribe**. Download **MusicXML** to fine-tune in
+Then open `http://SERVER_IP:8000` (or <http://localhost:8000> locally), choose a
+drum stem, enter the BPM from Moises, choose the `omnizart` engine, and hit
+**Transcribe**. Download **MusicXML** to fine-tune in
 [MuseScore](https://musescore.org) (free), or **PDF** to print and play.
 
-> Prefer `make`? `make up` builds + runs, `make down` stops it, `make logs` tails logs.
+The full image keeps the API and Omnizart in separate Python runtimes inside one
+container, so you deploy a single image while avoiding TensorFlow
+dependency conflicts. The build downloads Omnizart checkpoints into the image,
+so expect a large image, about 5 GB.
+
+Prefer `make`? `make run-full` builds and runs this image.
+
+## Run it (small Docker image — heuristic engine only)
+
+For a faster local smoke test, the default Compose image runs the lightweight
+heuristic engine and does not include Omnizart:
+
+```bash
+docker compose up --build
+```
+
+Or without Compose:
+
+```bash
+docker build -t drumscribe . && docker run --rm -p 8000:8000 drumscribe
+```
+
+Then open <http://localhost:8000>. Prefer `make`? `make up` builds + runs,
+`make down` stops it, and `make logs` tails logs.
 
 ## Run it (local Python — for development)
 
@@ -62,10 +88,10 @@ uvicorn app.main:app --reload --port 8000
 Or with the Makefile from the repo root: `make dev` (sets up the venv and runs
 with autoreload) and `make test`.
 
-## Better accuracy (omnizart pretrained engine)
+## Alternative local Omnizart setup
 
-omnizart needs an old TensorFlow stack, so it runs in its own Docker image,
-isolated from the API:
+For local Python development, you can still run Omnizart as a separate helper
+image instead of using `Dockerfile.full`:
 
 ```bash
 cd backend
@@ -75,10 +101,9 @@ export DRUMSCRIBE_OMNIZART_CMD="docker run --rm -v {dir}:/work drumscribe-omniza
 uvicorn app.main:app --reload --port 8000   # then pick the 'omnizart' engine in the UI
 ```
 
-Run the API **on the host** (local Python) when using this engine — it shells
-out to `docker run`, so running the API itself in a container would need the
-Docker socket mounted (docker-in-docker). The default `heuristic` engine has no
-such requirement and is what the bundled image / `docker compose up` uses.
+Run the API **on the host** with this setup because it shells out to `docker run`.
+For server deployment, prefer the full image above so the API and Omnizart ship
+inside one container.
 
 ## Tests
 
@@ -106,6 +131,7 @@ Coverage:
 
 ```
 Dockerfile               app image (API + UI + system libs)
+Dockerfile.full          full image (API + UI + Omnizart + checkpoints)
 docker-compose.yml       one-command run
 Makefile                 up / down / dev / test helpers
 backend/
