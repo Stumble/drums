@@ -13,10 +13,19 @@
     label { display: block; font-size: .8rem; color: #555; margin-bottom: .25rem; }
     input, select, button { padding: .5rem .6rem; font-size: 1rem; border: 1px solid #ccc; border-radius: 6px; }
     button { background: #111; color: #fff; cursor: pointer; border: none; }
+    button.secondary { background: #f4f4f4; color: #111; border: 1px solid #ddd; }
     button:disabled { opacity: .5; cursor: default; }
     #status { font-size: .85rem; color: #666; min-height: 1.2em; }
     #score { border: 1px solid #eee; border-radius: 8px; margin-top: 1rem; padding: 1rem; min-height: 120px; }
     .hint { font-size: .8rem; color: #888; }
+    #library { border: 1px solid #eee; border-radius: 8px; padding: 1rem; margin-top: 1rem; }
+    #library h2 { font-size: 1rem; margin: 0 0 .75rem; }
+    .library-item { display: flex; gap: .75rem; justify-content: space-between; align-items: center; padding: .65rem 0; border-top: 1px solid #eee; }
+    .library-item:first-of-type { border-top: 0; }
+    .library-title { font-weight: 600; }
+    .library-meta { font-size: .8rem; color: #777; margin-top: .15rem; }
+    .library-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+    #player { width: 100%; margin: .5rem 0 0; display: none; }
   </style>
 </head>
 <body>
@@ -27,6 +36,10 @@
     <div>
       <label>Drum stem (mp3 / m4a / wav)</label>
       <input type="file" id="file" accept=".mp3,.m4a,.wav,.flac,audio/*" />
+    </div>
+    <div>
+      <label>Title</label>
+      <input type="text" id="title" placeholder="Song title" style="width:14rem" />
     </div>
     <div>
       <label>BPM (from Moises)</label>
@@ -52,17 +65,151 @@
   </div>
 
   <div id="status"></div>
+  <audio id="player" controls></audio>
   <div class="row" id="actions" style="display:none">
     <button id="download">⬇ MusicXML</button>
     <button id="downloadPdf">⬇ PDF</button>
     <span class="hint">MusicXML → edit in MuseScore · PDF → print &amp; practice</span>
+  </div>
+  <div id="library">
+    <h2>Previous transcriptions</h2>
+    <div id="libraryList" class="hint">Loading…</div>
   </div>
   <div id="score"></div>
 
   <script>
     const API = location.origin.includes("file") ? "http://localhost:8000" : "";
     const $ = (id) => document.getElementById(id);
-    let osmd, lastXml = null;
+    let osmd, lastXml = null, lastRecordId = null, localAudioUrl = null;
+    let libraryItems = new Map();
+
+    function formatDate(iso) {
+      if (!iso) return "";
+      const d = new Date(iso);
+      return Number.isNaN(d.getTime()) ? "" : d.toLocaleString();
+    }
+
+    async function loadLibrary() {
+      const list = $("libraryList");
+      try {
+        const res = await fetch(API + "/library");
+        if (!res.ok) throw new Error(await res.text());
+        const { items } = await res.json();
+        if (!items.length) {
+          list.className = "hint";
+          list.textContent = "No saved transcriptions yet.";
+          libraryItems = new Map();
+          return;
+        }
+        libraryItems = new Map(items.map((item) => [item.id, item]));
+        list.className = "";
+        list.innerHTML = items.map((item) => `
+          <div class="library-item">
+            <div>
+              <div class="library-title">${escapeHtml(item.title || item.filename || "Drum transcription")}</div>
+              <div class="library-meta">${formatDate(item.created_at)} · ${escapeHtml(item.engine || "")} · ${item.hit_count ?? 0} hits</div>
+            </div>
+            <div class="library-actions">
+              <button class="secondary" data-view="${item.id}">View</button>
+              ${item.has_audio ? `<button class="secondary" data-play="${item.id}">Play</button>` : ""}
+              <button class="secondary" data-pdf="${item.id}">PDF</button>
+              <button class="secondary" data-xml="${item.id}">MusicXML</button>
+              <button class="secondary" data-rename="${item.id}" data-title="${escapeHtml(item.title || "")}">Rename</button>
+              <button class="secondary" data-delete="${item.id}">Delete</button>
+            </div>
+          </div>
+        `).join("");
+      } catch (e) {
+        list.textContent = "Could not load saved transcriptions: " + e.message;
+      }
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[ch]));
+    }
+
+    function downloadUrl(url, filename) {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+    }
+
+    async function viewRecord(id) {
+      $("status").textContent = "Loading saved transcription…";
+      try {
+        const res = await fetch(API + `/library/${id}/musicxml`);
+        if (!res.ok) throw new Error(await res.text());
+        lastXml = await res.text();
+        lastRecordId = id;
+        if (libraryItems.get(id)?.has_audio) {
+          setPlayer(API + `/library/${id}/audio`);
+        } else {
+          setPlayer("");
+        }
+        $("actions").style.display = "flex";
+        if (!osmd) osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay("score", { drawTitle: true });
+        await osmd.load(lastXml);
+        osmd.render();
+        $("status").textContent = "Loaded saved transcription.";
+      } catch (e) {
+        $("status").textContent = "Load error: " + e.message;
+      }
+    }
+
+    async function renameRecord(id, currentTitle) {
+      const title = prompt("Rename transcription", currentTitle || "");
+      if (title === null) return;
+      const clean = title.trim();
+      if (!clean) return;
+      $("status").textContent = "Renaming…";
+      try {
+        const res = await fetch(API + `/library/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: clean }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        if (lastRecordId === id) $("title").value = clean;
+        $("status").textContent = "Renamed.";
+        await loadLibrary();
+      } catch (e) {
+        $("status").textContent = "Rename error: " + e.message;
+      }
+    }
+
+    async function deleteRecord(id) {
+      if (!confirm("Delete this transcription?")) return;
+      $("status").textContent = "Deleting…";
+      try {
+        const res = await fetch(API + `/library/${id}`, { method: "DELETE" });
+        if (!res.ok) throw new Error(await res.text());
+        if (lastRecordId === id) {
+          lastXml = null;
+          lastRecordId = null;
+          $("actions").style.display = "none";
+          $("score").innerHTML = "";
+          setPlayer("");
+        }
+        $("status").textContent = "Deleted.";
+        await loadLibrary();
+      } catch (e) {
+        $("status").textContent = "Delete error: " + e.message;
+      }
+    }
+
+    function setPlayer(src) {
+      const player = $("player");
+      if (!src) {
+        player.removeAttribute("src");
+        player.style.display = "none";
+        return;
+      }
+      player.src = src;
+      player.style.display = "block";
+    }
 
     async function transcribe() {
       const f = $("file").files[0];
@@ -73,6 +220,7 @@
       fd.append("bpm", $("bpm").value);
       fd.append("grid", $("grid").value);
       fd.append("engine", $("engine").value);
+      fd.append("title", $("title").value);
 
       $("go").disabled = true;
       $("status").textContent = "Transcribing… (first run downloads the renderer)";
@@ -80,9 +228,11 @@
         const res = await fetch(API + "/transcribe", { method: "POST", body: fd });
         if (!res.ok) throw new Error(await res.text());
         lastXml = await res.text();
+        lastRecordId = res.headers.get("X-Record-Id");
         const hits = res.headers.get("X-Hit-Count");
         $("status").textContent = `Done — ${hits} hits detected.`;
         $("actions").style.display = "flex";
+        loadLibrary();
 
         if (!osmd) osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay("score", { drawTitle: true });
         await osmd.load(lastXml);
@@ -95,7 +245,7 @@
     }
 
     function baseName(ext) {
-      return ($("file").files[0]?.name || "drums").replace(/\.[^.]+$/, "") + ext;
+      return ($("title").value.trim() || $("file").files[0]?.name || "drums").replace(/\.[^.]+$/, "") + ext;
     }
 
     function download() {
@@ -111,18 +261,23 @@
       if (!lastXml) return;
       $("status").textContent = "Engraving PDF…";
       try {
-        const res = await fetch(API + "/export/pdf", {
-          method: "POST",
-          headers: { "Content-Type": "text/plain" },
-          body: lastXml,
-        });
-        if (!res.ok) throw new Error(await res.text());
-        const blob = await res.blob();
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(blob);
-        a.download = baseName(".pdf");
-        a.click();
+        let blob;
+        if (lastRecordId) {
+          const res = await fetch(API + `/library/${lastRecordId}/pdf`);
+          if (!res.ok) throw new Error(await res.text());
+          blob = await res.blob();
+        } else {
+          const res = await fetch(API + "/export/pdf", {
+            method: "POST",
+            headers: { "Content-Type": "text/plain" },
+            body: lastXml,
+          });
+          if (!res.ok) throw new Error(await res.text());
+          blob = await res.blob();
+        }
+        downloadUrl(URL.createObjectURL(blob), baseName(".pdf"));
         $("status").textContent = "PDF downloaded.";
+        loadLibrary();
       } catch (e) {
         $("status").textContent = "PDF error: " + e.message;
       }
@@ -131,6 +286,34 @@
     $("go").addEventListener("click", transcribe);
     $("download").addEventListener("click", download);
     $("downloadPdf").addEventListener("click", downloadPdf);
+    $("libraryList").addEventListener("click", (e) => {
+      const button = e.target.closest("button");
+      if (!button) return;
+      const viewId = button.dataset.view;
+      const playId = button.dataset.play;
+      const pdfId = button.dataset.pdf;
+      const xmlId = button.dataset.xml;
+      const renameId = button.dataset.rename;
+      const deleteId = button.dataset.delete;
+      if (viewId) viewRecord(viewId);
+      if (playId) setPlayer(API + `/library/${playId}/audio`);
+      if (pdfId) downloadUrl(API + `/library/${pdfId}/pdf`, `${pdfId}.pdf`);
+      if (xmlId) downloadUrl(API + `/library/${xmlId}/musicxml`, `${xmlId}.musicxml`);
+      if (renameId) renameRecord(renameId, button.dataset.title);
+      if (deleteId) deleteRecord(deleteId);
+    });
+    $("file").addEventListener("change", () => {
+      const file = $("file").files[0];
+      if (!file) {
+        setPlayer("");
+        return;
+      }
+      if (!$("title").value.trim()) $("title").value = file.name.replace(/\.[^.]+$/, "");
+      if (localAudioUrl) URL.revokeObjectURL(localAudioUrl);
+      localAudioUrl = URL.createObjectURL(file);
+      setPlayer(localAudioUrl);
+    });
+    loadLibrary();
   </script>
 </body>
 </html>

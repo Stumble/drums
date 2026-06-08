@@ -14,6 +14,7 @@ cleanly in MuseScore/Sibelius for hand-correction.
 
 from __future__ import annotations
 
+import re
 from typing import List, Sequence, Tuple
 
 from music21 import (
@@ -130,6 +131,8 @@ def build_score(
     score.insert(0, metadata.Metadata())
     score.metadata.title = title
     part = stream.Part()
+    part.partName = " "
+    part.partAbbreviation = " "
 
     for m in range(num_measures):
         measure = stream.Measure(number=m + 1)
@@ -161,9 +164,19 @@ def build_score(
     return score
 
 
+def clean_musicxml_metadata(xml: str) -> str:
+    """Remove renderer-visible defaults that make the sheet look noisy."""
+    xml = re.sub(r"<part-name>.*?</part-name>", "<part-name> </part-name>", xml)
+    xml = re.sub(r"<part-abbreviation>.*?</part-abbreviation>", "<part-abbreviation> </part-abbreviation>", xml)
+    xml = re.sub(r'\s*<creator type="composer">Music21</creator>', "", xml)
+    xml = re.sub(r'\s*<software>music21 v\.[^<]+</software>', "", xml)
+    return xml
+
+
 def to_musicxml(hits: List[DrumHit], bpm: float, **kwargs) -> str:
     """Render hits to a MusicXML string."""
     from music21.musicxml.m21ToXml import GeneralObjectExporter
 
     score = build_score(hits, bpm, **kwargs)
-    return GeneralObjectExporter(score).parse().decode("utf-8")
+    xml = GeneralObjectExporter(score).parse().decode("utf-8")
+    return clean_musicxml_metadata(xml)

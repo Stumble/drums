@@ -11,6 +11,7 @@ import numpy as np
 import soundfile as sf
 from fastapi.testclient import TestClient
 
+import app.main as main
 from app.main import app
 
 SR = 44100
@@ -70,6 +71,58 @@ def test_transcribe_returns_musicxml():
     assert int(r.headers["X-Hit-Count"]) > 0
     assert r.text.startswith("<?xml") and "<score-partwise" in r.text
     assert "<unpitched>" in r.text
+    assert r.headers["X-Record-Id"]
+
+
+def test_transcribe_saves_library_record(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "LIBRARY_DIR", tmp_path)
+    wav = _beat_wav_bytes()
+    r = client.post(
+        "/transcribe",
+        files={"file": ("beat.wav", wav, "audio/wav")},
+        data={"bpm": "120", "engine": "heuristic", "grid": "4", "title": "My Groove"},
+    )
+    assert r.status_code == 200, r.text
+    record_id = r.headers["X-Record-Id"]
+
+    listing = client.get("/library")
+    assert listing.status_code == 200
+    items = listing.json()["items"]
+    assert len(items) == 1
+    assert items[0]["id"] == record_id
+    assert items[0]["title"] == "My Groove"
+    assert items[0]["has_pdf"] is False
+    assert items[0]["has_audio"] is True
+
+    musicxml = client.get(f"/library/{record_id}/musicxml")
+    assert musicxml.status_code == 200
+    assert musicxml.text == r.text
+    assert "<movement-title>My Groove</movement-title>" in musicxml.text
+
+    audio = client.get(f"/library/{record_id}/audio")
+    assert audio.status_code == 200
+    assert audio.headers["content-type"] == "audio/wav"
+    assert audio.content == wav
+
+    pdf = client.get(f"/library/{record_id}/pdf")
+    assert pdf.status_code == 200, pdf.text
+    assert pdf.headers["content-type"] == "application/pdf"
+    assert pdf.content[:5] == b"%PDF-"
+
+    listing = client.get("/library")
+    assert listing.json()["items"][0]["has_pdf"] is True
+
+    renamed = client.patch(f"/library/{record_id}", json={"title": "Renamed Beat"})
+    assert renamed.status_code == 200
+    assert renamed.json()["title"] == "Renamed Beat"
+    musicxml = client.get(f"/library/{record_id}/musicxml")
+    assert "<movement-title>Renamed Beat</movement-title>" in musicxml.text
+    assert client.get("/library").json()["items"][0]["has_pdf"] is False
+
+    deleted = client.delete(f"/library/{record_id}")
+    assert deleted.status_code == 200
+    assert client.get("/library").json()["items"] == []
+    assert client.get(f"/library/{record_id}/musicxml").status_code == 404
 
 
 def test_transcribe_rejects_bad_bpm():

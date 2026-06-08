@@ -35,6 +35,9 @@ def test_produces_valid_musicxml():
     # drum clef + unpitched percussion present
     assert "percussion" in xml.lower()
     assert "<unpitched>" in xml
+    assert "<part-name> </part-name>" in xml
+    assert "<part-abbreviation> </part-abbreviation>" in xml
+    assert "Music21" not in xml
     # the three voices we played should all appear
     assert xml.count("<note") >= 12
     # two-voice layout: hands (stem up) and feet (stem down)
